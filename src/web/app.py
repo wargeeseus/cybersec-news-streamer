@@ -7,10 +7,10 @@ from contextlib import asynccontextmanager
 import logging
 import asyncio
 
-from ..db.database import init_db, get_setting
+from ..db.database import init_db, get_setting, get_all_channels, get_channel, create_channel
+from ..db.models import ChannelCreate
 from ..config import settings
 from .routes import router
-from ..stream.youtube import stream_manager
 from .auth import (
     auth_required,
     get_or_create_totp_secret,
@@ -29,42 +29,59 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Channel stream managers (one per channel)
+channel_stream_managers = {}
 
-async def auto_start_stream():
-    """Auto-start the stream if configured."""
+
+def get_stream_manager(channel_id: int):
+    """Get or create a stream manager for a channel."""
+    from ..stream.youtube import YouTubeStreamer
+    if channel_id not in channel_stream_managers:
+        channel_stream_managers[channel_id] = YouTubeStreamer()
+    return channel_stream_managers[channel_id]
+
+
+async def auto_start_streams():
+    """Auto-start streams for all active channels with stream keys."""
     await asyncio.sleep(5)  # Wait for app to fully start
 
-    stream_key = await get_setting('youtube_stream_key', '')
-    if stream_key and not stream_manager.is_running:
-        logger.info("Auto-starting stream...")
-        asyncio.create_task(stream_manager.start())
-    else:
-        if not stream_key:
-            logger.warning("No stream key configured - stream will not auto-start")
+    channels = await get_all_channels()
+    for channel in channels:
+        if channel.stream_key and channel.is_active:
+            manager = get_stream_manager(channel.id)
+            if not manager.is_running:
+                logger.info(f"Auto-starting stream for channel: {channel.name}")
+                manager.update_config(
+                    stream_key=channel.stream_key,
+                    rtmp_url=channel.rtmp_url,
+                    display_seconds=channel.display_seconds
+                )
+                asyncio.create_task(manager.start())
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    # Startup
     logger.info("Initializing database...")
     await init_db()
     logger.info("Database initialized")
 
-    # Auto-start stream
-    asyncio.create_task(auto_start_stream())
+    # Auto-start streams
+    asyncio.create_task(auto_start_streams())
 
     yield
-    # Shutdown
+
+    # Shutdown - stop all streams
     logger.info("Shutting down...")
-    if stream_manager.is_running:
-        await stream_manager.stop()
+    for channel_id, manager in channel_stream_managers.items():
+        if manager.is_running:
+            await manager.stop()
 
 
 app = FastAPI(
     title="CyberSec News Streamer",
-    description="Web portal for managing cybersecurity news stream",
-    version="1.0.0",
+    description="Multi-channel news streaming portal",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -77,7 +94,7 @@ if static_path.exists():
 templates_path = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_path))
 
-# Include API routes (will be protected by middleware)
+# Include API routes
 app.include_router(router)
 
 
@@ -86,7 +103,6 @@ app.include_router(router)
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None):
     """Login page with QR code for Google Authenticator."""
-    # Check if already authenticated
     if auth_required(request):
         return RedirectResponse(url="/", status_code=302)
 
@@ -113,14 +129,11 @@ async def login_page(request: Request, error: str = None):
 @app.post("/login")
 async def login_submit(request: Request, code: str = Form(...)):
     """Handle login form submission."""
-    # Verify TOTP code
     if await verify_totp(code):
-        # Mark setup complete on first successful login
         if not await is_totp_setup():
             await mark_totp_setup_complete()
             logger.info("TOTP setup completed")
 
-        # Create session
         token = create_session_token()
         response = RedirectResponse(url="/", status_code=302)
         response.set_cookie(
@@ -133,7 +146,6 @@ async def login_submit(request: Request, code: str = Form(...)):
         logger.info("User logged in successfully")
         return response
     else:
-        # Invalid code
         logger.warning("Failed login attempt - invalid TOTP code")
         return RedirectResponse(url="/login?error=Invalid+code.+Please+try+again.", status_code=302)
 
@@ -146,36 +158,70 @@ async def logout():
     return response
 
 
-# --- Protected Routes ---
+# --- Channel Routes ---
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    """Main dashboard view - shows stream queue (auto-approved items)."""
-    # Check authentication
+    """Redirect to first channel."""
     if not auth_required(request):
         return RedirectResponse(url="/login", status_code=302)
 
-    from ..db.database import get_news_items_by_status, get_counts_by_status, get_stream_config
+    channels = await get_all_channels()
+    if channels:
+        return RedirectResponse(url=f"/channel/{channels[0].id}", status_code=302)
+
+    # No channels, show empty dashboard
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "channels": [],
+            "current_channel": None,
+            "queue_items": [],
+            "counts": {"approved": 0, "streamed": 0},
+            "stream_status": {"is_running": False},
+            "config": {},
+        }
+    )
+
+
+@app.get("/channel/{channel_id}", response_class=HTMLResponse)
+async def channel_dashboard(request: Request, channel_id: int):
+    """Dashboard for a specific channel."""
+    if not auth_required(request):
+        return RedirectResponse(url="/login", status_code=302)
+
+    from ..db.database import get_news_items_by_status, get_counts_by_status
     from ..db.models import NewsStatus
 
-    # Get counts
-    counts = await get_counts_by_status()
+    channels = await get_all_channels()
+    current_channel = await get_channel(channel_id)
 
-    # Get approved items (the stream queue)
-    queue_items = await get_news_items_by_status(NewsStatus.APPROVED, limit=100)
+    if not current_channel:
+        return RedirectResponse(url="/", status_code=302)
 
-    # Stream status and config
-    stream_status = stream_manager.get_status()
-    config = await get_stream_config()
+    # Get channel-specific data
+    counts = await get_counts_by_status(channel_id=channel_id)
+    queue_items = await get_news_items_by_status(NewsStatus.APPROVED, limit=25, channel_id=channel_id)
+
+    # Get stream manager for this channel
+    manager = get_stream_manager(channel_id)
+    stream_status = manager.get_status()
 
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
-            "counts": counts,
+            "channels": channels,
+            "current_channel": current_channel,
             "queue_items": queue_items,
+            "counts": counts,
             "stream_status": stream_status,
-            "config": config,
+            "config": {
+                "stream_key": current_channel.stream_key,
+                "rtmp_url": current_channel.rtmp_url,
+                "display_seconds": current_channel.display_seconds,
+            },
         }
     )
 
@@ -186,21 +232,16 @@ async def health_check():
     return {"status": "healthy"}
 
 
-# --- Middleware for API route protection ---
+# --- Middleware ---
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Protect API routes with authentication."""
     path = request.url.path
-
-    # Public paths that don't require auth
     public_paths = ["/login", "/health", "/static"]
-
-    # Check if path is public
     is_public = any(path.startswith(p) for p in public_paths)
 
     if not is_public and path.startswith("/api"):
-        # Check authentication for API routes
         if not auth_required(request):
             return RedirectResponse(url="/login", status_code=302)
 

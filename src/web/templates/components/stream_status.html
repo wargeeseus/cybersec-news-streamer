@@ -5,7 +5,7 @@
         <div>
             <strong>Status:</strong>
             <span class="status-badge {{ 'approved' if stream_status.is_running else 'pending' }}">
-                {{ stream_status.state }}
+                {{ stream_status.state if stream_status.state else 'stopped' }}
             </span>
         </div>
     </div>
@@ -22,17 +22,17 @@
     <div style="margin-top: 15px; display: flex; gap: 10px;">
         {% if stream_status.is_running %}
         <button class="btn btn-stream stop"
-                hx-post="/api/stream/stop"
+                hx-post="/api/channel/{{ channel_id }}/stream/stop"
                 hx-target="#stream-status"
                 hx-swap="innerHTML">
             Stop Stream
         </button>
         {% else %}
         <button class="btn btn-stream"
-                hx-post="/api/stream/start"
+                hx-post="/api/channel/{{ channel_id }}/stream/start"
                 hx-target="#stream-status"
                 hx-swap="innerHTML"
-                {% if not config or not config.youtube_stream_key %}disabled title="Configure stream key first"{% endif %}>
+                {% if not config or not config.stream_key %}disabled title="Configure stream key first"{% endif %}>
             Start Stream
         </button>
         {% endif %}
@@ -44,52 +44,16 @@
     <!-- Stream Preview -->
     <div id="stream-preview" style="display: none; margin-top: 15px;">
         <div style="border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: #000;">
-            <!-- Frame Preview -->
             <div id="frame-preview-container">
                 <img id="frame-preview-img"
-                     src="/api/stream/current-frame?t={{ range(1000000) | random }}"
+                     src="/api/channel/{{ channel_id }}/current-frame?t={{ range(1000000) | random }}"
                      style="width: 100%; height: auto; display: block;"
                      alt="Current Frame"
                      onerror="this.style.display='none'; document.getElementById('no-frame-msg').style.display='block';">
                 <div id="no-frame-msg" style="display: none; padding: 40px; text-align: center; color: var(--text-secondary);">
                     <div style="font-size: 18px; margin-bottom: 10px;">No frames available</div>
-                    <div style="font-size: 12px;">Approve some news items first</div>
+                    <div style="font-size: 12px;">Click "Fetch Now" to get news</div>
                 </div>
-            </div>
-
-            <!-- YouTube Embed (if configured) -->
-            {% if config and config.youtube_video_id %}
-            <div style="margin-top: 10px;">
-                <div style="font-size: 11px; color: var(--text-secondary); padding: 5px 10px;">YOUTUBE LIVE</div>
-                <iframe
-                    width="100%"
-                    height="200"
-                    src="https://www.youtube.com/embed/{{ config.youtube_video_id }}?autoplay=1&mute=1"
-                    frameborder="0"
-                    allow="autoplay; encrypted-media"
-                    allowfullscreen>
-                </iframe>
-            </div>
-            {% endif %}
-        </div>
-
-        <!-- YouTube Video ID Config -->
-        <div style="margin-top: 10px;">
-            <form hx-post="/api/config/youtube-embed"
-                  hx-target="#stream-status"
-                  hx-swap="innerHTML"
-                  style="display: flex; gap: 8px; align-items: center;">
-                <input type="text"
-                       name="youtube_video_id"
-                       value="{{ config.youtube_video_id if config and config.youtube_video_id else '' }}"
-                       placeholder="YouTube Video ID (e.g., dQw4w9WgXcQ)"
-                       style="flex: 1; padding: 6px 10px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 12px;">
-                <button type="submit" class="btn btn-edit" style="padding: 6px 12px; font-size: 12px;">
-                    Embed
-                </button>
-            </form>
-            <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px;">
-                Find Video ID in YouTube Studio → Go Live → copy from stream URL
             </div>
         </div>
     </div>
@@ -109,9 +73,9 @@
             <div style="font-size: 13px; color: var(--text-secondary);">
                 <div style="margin-bottom: 8px;">
                     <span>Stream Key:</span>
-                    <span style="color: {{ 'var(--accent-green)' if config and config.youtube_stream_key else 'var(--accent-red)' }};">
-                        {% if config and config.youtube_stream_key %}
-                            ********{{ config.youtube_stream_key[-4:] }}
+                    <span style="color: {{ 'var(--accent-green)' if config and config.stream_key else 'var(--accent-red)' }};">
+                        {% if config and config.stream_key %}
+                            ********{{ config.stream_key[-4:] }}
                         {% else %}
                             Not configured
                         {% endif %}
@@ -119,7 +83,7 @@
                 </div>
                 <div style="margin-bottom: 8px;">
                     <span>Display Time:</span>
-                    <span>{{ config.news_display_seconds if config else 30 }}s per item</span>
+                    <span>{{ config.display_seconds if config else 30 }}s per item</span>
                 </div>
                 <div>
                     <span>RTMP URL:</span>
@@ -130,39 +94,36 @@
 
         <!-- Config Form (hidden by default) -->
         <form id="config-form" style="display: none;"
-              hx-post="/api/config/stream"
+              hx-post="/api/channel/{{ channel_id }}/config"
               hx-target="#stream-status"
               hx-swap="innerHTML"
               hx-on::after-request="window.isEditingConfig = false">
             <div class="form-group" style="margin-bottom: 12px;">
-                <label for="youtube_stream_key" style="font-size: 12px; color: var(--text-secondary);">
+                <label style="font-size: 12px; color: var(--text-secondary);">
                     YouTube Stream Key
                 </label>
                 <input type="password"
-                       id="youtube_stream_key"
-                       name="youtube_stream_key"
-                       value="{{ config.youtube_stream_key if config else '' }}"
+                       name="stream_key"
+                       value="{{ config.stream_key if config else '' }}"
                        placeholder="xxxx-xxxx-xxxx-xxxx"
                        style="width: 100%; padding: 8px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 13px;">
             </div>
             <div class="form-group" style="margin-bottom: 12px;">
-                <label for="news_display_seconds" style="font-size: 12px; color: var(--text-secondary);">
+                <label style="font-size: 12px; color: var(--text-secondary);">
                     Display Duration (seconds)
                 </label>
                 <input type="number"
-                       id="news_display_seconds"
-                       name="news_display_seconds"
-                       value="{{ config.news_display_seconds if config else 30 }}"
+                       name="display_seconds"
+                       value="{{ config.display_seconds if config else 30 }}"
                        min="5"
                        max="300"
                        style="width: 100%; padding: 8px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 13px;">
             </div>
             <div class="form-group" style="margin-bottom: 12px;">
-                <label for="rtmp_url" style="font-size: 12px; color: var(--text-secondary);">
+                <label style="font-size: 12px; color: var(--text-secondary);">
                     RTMP URL
                 </label>
                 <input type="text"
-                       id="rtmp_url"
                        name="rtmp_url"
                        value="{{ config.rtmp_url if config else 'rtmp://a.rtmp.youtube.com/live2' }}"
                        style="width: 100%; padding: 8px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 13px;">
@@ -183,16 +144,8 @@
         <h4 style="margin-bottom: 10px; font-size: 14px;">Queue Stats</h4>
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 13px;">
             <div>
-                <span style="color: var(--text-secondary);">Pending:</span>
-                <span>{{ counts.pending if counts else 0 }}</span>
-            </div>
-            <div>
-                <span style="color: var(--text-secondary);">Approved:</span>
+                <span style="color: var(--text-secondary);">In Queue:</span>
                 <span style="color: var(--accent-green);">{{ counts.approved if counts else 0 }}</span>
-            </div>
-            <div>
-                <span style="color: var(--text-secondary);">Rejected:</span>
-                <span>{{ counts.rejected if counts else 0 }}</span>
             </div>
             <div>
                 <span style="color: var(--text-secondary);">Streamed:</span>
@@ -207,4 +160,3 @@
     </p>
     {% endif %}
 </div>
-

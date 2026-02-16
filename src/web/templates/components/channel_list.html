@@ -1,0 +1,7 @@
+{% for channel in channels %}
+<a href="/channel/{{ channel.id }}"
+   class="channel-item">
+    <span class="channel-status offline"></span>
+    {{ channel.name }}
+</a>
+{% endfor %}

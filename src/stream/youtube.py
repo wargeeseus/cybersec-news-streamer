@@ -163,7 +163,7 @@ class YouTubeStreamer:
 
     async def _prepare_frames(self) -> List[Path]:
         """Generate frames for all approved items."""
-        items = await get_news_items_by_status(NewsStatus.APPROVED, limit=100)
+        items = await get_news_items_by_status(NewsStatus.APPROVED, limit=25)
         frame_paths = []
 
         for item in items:
@@ -179,7 +179,7 @@ class YouTubeStreamer:
 
     async def _get_approved_items(self) -> List[NewsItem]:
         """Get all approved items."""
-        return await get_news_items_by_status(NewsStatus.APPROVED, limit=100)
+        return await get_news_items_by_status(NewsStatus.APPROVED, limit=25)
 
     def _generate_transition_frame(self) -> Path:
         """Generate a transition frame to prevent screen burn."""
@@ -244,8 +244,8 @@ class YouTubeStreamer:
         return transition_path
 
     async def _stream_transition(self, frame_path: str) -> bool:
-        """Stream a brief transition frame (2 seconds)."""
-        transition_duration = 2  # seconds
+        """Stream a brief transition frame (3 seconds)."""
+        transition_duration = 3  # seconds
 
         # Check for background music
         music_path = self._data_dir.parent / "assets" / "music" / "background.mp3"
@@ -341,6 +341,7 @@ class YouTubeStreamer:
 
                 # Stream transition frame between slides (prevents screen burn)
                 if not self._stop_event.is_set():
+                    logger.info("Streaming transition...")
                     await self._stream_transition(str(transition_frame))
 
     async def _stream_single_image(self, frame_path: str) -> bool:

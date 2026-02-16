@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks, Form
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from typing import Optional
@@ -12,9 +12,13 @@ from ..db.database import (
     get_counts_by_status,
     get_stream_config,
     set_setting,
+    get_all_channels,
+    get_channel,
+    create_channel,
+    update_channel,
+    create_news_item,
 )
-from ..db.models import NewsStatus, NewsItemUpdate
-from ..stream.youtube import stream_manager
+from ..db.models import NewsStatus, NewsItemUpdate, ChannelCreate, ChannelUpdate, NewsItemCreate
 from ..video.frame_generator import generate_frame
 
 router = APIRouter()
@@ -22,6 +26,173 @@ router = APIRouter()
 # Templates
 templates_path = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_path))
+
+
+def get_stream_manager(channel_id: int):
+    """Get stream manager for a channel."""
+    from .app import get_stream_manager as app_get_stream_manager
+    return app_get_stream_manager(channel_id)
+
+
+# --- Channel API Endpoints ---
+
+@router.post("/api/channel/create", response_class=HTMLResponse)
+async def create_new_channel(
+    request: Request,
+    name: str = Form(...),
+    news_topic: str = Form(...),
+    stream_key: str = Form(""),
+    rtmp_url: str = Form("rtmp://a.rtmp.youtube.com/live2"),
+    display_seconds: int = Form(30),
+):
+    """Create a new channel."""
+    channel_data = ChannelCreate(
+        name=name,
+        news_topic=news_topic,
+        stream_key=stream_key,
+        rtmp_url=rtmp_url,
+        display_seconds=display_seconds,
+    )
+    await create_channel(channel_data)
+
+    # Return updated channel list
+    channels = await get_all_channels()
+    return templates.TemplateResponse(
+        "components/channel_list.html",
+        {"request": request, "channels": channels}
+    )
+
+
+@router.get("/api/channel/{channel_id}/stream/status", response_class=HTMLResponse)
+async def channel_stream_status(request: Request, channel_id: int):
+    """Get stream status for a channel."""
+    channel = await get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    manager = get_stream_manager(channel_id)
+    status = manager.get_status()
+    counts = await get_counts_by_status(channel_id=channel_id)
+
+    return templates.TemplateResponse(
+        "components/stream_status.html",
+        {
+            "request": request,
+            "stream_status": status,
+            "counts": counts,
+            "config": {
+                "stream_key": channel.stream_key,
+                "rtmp_url": channel.rtmp_url,
+                "display_seconds": channel.display_seconds,
+            },
+            "channel_id": channel_id,
+        }
+    )
+
+
+@router.post("/api/channel/{channel_id}/stream/start", response_class=HTMLResponse)
+async def start_channel_stream(request: Request, channel_id: int, background_tasks: BackgroundTasks):
+    """Start streaming for a channel."""
+    channel = await get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    manager = get_stream_manager(channel_id)
+
+    if manager.is_running:
+        return await channel_stream_status(request, channel_id)
+
+    # Configure and start
+    manager.update_config(
+        stream_key=channel.stream_key,
+        rtmp_url=channel.rtmp_url,
+        display_seconds=channel.display_seconds,
+    )
+    manager._channel_id = channel_id  # Store channel ID for fetching news
+    background_tasks.add_task(manager.start)
+
+    await asyncio.sleep(0.5)
+    return await channel_stream_status(request, channel_id)
+
+
+@router.post("/api/channel/{channel_id}/stream/stop", response_class=HTMLResponse)
+async def stop_channel_stream(request: Request, channel_id: int):
+    """Stop streaming for a channel."""
+    manager = get_stream_manager(channel_id)
+    await manager.stop()
+    return await channel_stream_status(request, channel_id)
+
+
+@router.post("/api/channel/{channel_id}/fetch", response_class=HTMLResponse)
+async def fetch_channel_news(request: Request, channel_id: int, background_tasks: BackgroundTasks):
+    """Fetch news for a specific channel based on its topic."""
+    channel = await get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    from ..news.fetcher import fetch_news_for_topic
+    from ..ai.summarizer import summarize_news
+
+    async def do_fetch():
+        items = await fetch_news_for_topic(channel.news_topic)
+        for item in items:
+            result = await summarize_news(item["title"], item["description"])
+            if result:
+                news_item = NewsItemCreate(
+                    channel_id=channel_id,
+                    title=result["headline"],
+                    original_title=item["title"],
+                    summary=result["summary"],
+                    source_name=item["source_name"],
+                    source_url=item["url"],
+                )
+                created = await create_news_item(news_item)
+                if created:
+                    try:
+                        frame_path = generate_frame(created)
+                        await update_news_item(created.id, NewsItemUpdate(frame_path=str(frame_path)))
+                    except Exception:
+                        pass
+
+    background_tasks.add_task(do_fetch)
+
+    # Return current queue
+    items = await get_news_items_by_status(NewsStatus.APPROVED, limit=25, channel_id=channel_id)
+    return templates.TemplateResponse(
+        "components/news_queue.html",
+        {
+            "request": request,
+            "items": items,
+            "message": f"Fetching news about '{channel.news_topic}'...",
+        }
+    )
+
+
+@router.post("/api/channel/{channel_id}/config", response_class=HTMLResponse)
+async def update_channel_config(
+    request: Request,
+    channel_id: int,
+    stream_key: str = Form(""),
+    rtmp_url: str = Form("rtmp://a.rtmp.youtube.com/live2"),
+    display_seconds: int = Form(30),
+):
+    """Update channel stream configuration."""
+    update_data = ChannelUpdate(
+        stream_key=stream_key,
+        rtmp_url=rtmp_url,
+        display_seconds=display_seconds,
+    )
+    await update_channel(channel_id, update_data)
+
+    # Update stream manager config
+    manager = get_stream_manager(channel_id)
+    manager.update_config(
+        stream_key=stream_key,
+        rtmp_url=rtmp_url,
+        display_seconds=display_seconds,
+    )
+
+    return await channel_stream_status(request, channel_id)
 
 
 # --- News Item Endpoints ---

@@ -359,7 +359,95 @@
             margin-bottom: 10px;
         }
 
-        /* Layout */
+        /* Layout with Channel Sidebar */
+        .app-layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .channel-sidebar {
+            width: 220px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            padding: 20px 15px;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        .channel-sidebar h3 {
+            color: var(--accent-green);
+            font-size: 14px;
+            text-transform: uppercase;
+            margin-bottom: 15px;
+            letter-spacing: 1px;
+        }
+
+        .channel-list {
+            list-style: none;
+        }
+
+        .channel-item {
+            display: block;
+            padding: 12px 15px;
+            margin-bottom: 5px;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .channel-item:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .channel-item.active {
+            background: var(--accent-green);
+            color: var(--bg-primary);
+        }
+
+        .channel-item .channel-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .channel-item .channel-status.live {
+            background: var(--accent-red);
+            animation: pulse 1.5s infinite;
+        }
+
+        .channel-item .channel-status.offline {
+            background: var(--text-secondary);
+        }
+
+        .add-channel-btn {
+            width: 100%;
+            padding: 12px;
+            margin-top: 15px;
+            background: var(--bg-tertiary);
+            border: 1px dashed var(--border-color);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .add-channel-btn:hover {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        .main-wrapper {
+            margin-left: 220px;
+            flex: 1;
+            padding: 20px;
+        }
+
         .main-content {
             display: grid;
             grid-template-columns: 1fr;
@@ -375,6 +463,37 @@
         .sidebar {
             position: sticky;
             top: 20px;
+        }
+
+        /* Channel Modal */
+        .channel-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .channel-modal.active {
+            display: flex;
+        }
+
+        .channel-modal-content {
+            background: var(--bg-secondary);
+            padding: 30px;
+            border-radius: 12px;
+            width: 400px;
+            max-width: 90%;
+        }
+
+        .channel-modal-content h3 {
+            margin-bottom: 20px;
+            color: var(--accent-green);
         }
 
         /* Preview Modal */
