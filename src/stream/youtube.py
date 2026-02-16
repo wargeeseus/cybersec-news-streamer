@@ -181,11 +181,131 @@ class YouTubeStreamer:
         """Get all approved items."""
         return await get_news_items_by_status(NewsStatus.APPROVED, limit=100)
 
+    def _generate_transition_frame(self) -> Path:
+        """Generate a transition frame to prevent screen burn."""
+        from PIL import Image, ImageDraw, ImageFont
+
+        width = settings.frame_width
+        height = settings.frame_height
+
+        # Create gradient-like transition with animated feel
+        img = Image.new('RGB', (width, height), '#050508')
+        draw = ImageDraw.Draw(img)
+
+        # Draw subtle grid pattern (different from news frames)
+        grid_color = '#0a0a12'
+        for x in range(0, width, 40):
+            draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
+        for y in range(0, height, 40):
+            draw.line([(0, y), (width, y)], fill=grid_color, width=1)
+
+        # Center logo/branding
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 48)
+            small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 24)
+        except:
+            font = ImageFont.load_default()
+            small_font = font
+
+        # Main title
+        title = "CYBERSEC NEWS"
+        title_bbox = draw.textbbox((0, 0), title, font=font)
+        title_width = title_bbox[2] - title_bbox[0]
+        title_x = (width - title_width) // 2
+        draw.text((title_x, height // 2 - 40), title, font=font, fill='#00ff88')
+
+        # Subtitle with animation hint
+        subtitle = "• • •"
+        sub_bbox = draw.textbbox((0, 0), subtitle, font=small_font)
+        sub_width = sub_bbox[2] - sub_bbox[0]
+        sub_x = (width - sub_width) // 2
+        draw.text((sub_x, height // 2 + 30), subtitle, font=small_font, fill='#00aaff')
+
+        # Decorative corners
+        corner_color = '#00ff88'
+        corner_len = 50
+        # Top left
+        draw.line([(50, 50), (50 + corner_len, 50)], fill=corner_color, width=2)
+        draw.line([(50, 50), (50, 50 + corner_len)], fill=corner_color, width=2)
+        # Top right
+        draw.line([(width - 50 - corner_len, 50), (width - 50, 50)], fill=corner_color, width=2)
+        draw.line([(width - 50, 50), (width - 50, 50 + corner_len)], fill=corner_color, width=2)
+        # Bottom left
+        draw.line([(50, height - 50), (50 + corner_len, height - 50)], fill=corner_color, width=2)
+        draw.line([(50, height - 50 - corner_len), (50, height - 50)], fill=corner_color, width=2)
+        # Bottom right
+        draw.line([(width - 50 - corner_len, height - 50), (width - 50, height - 50)], fill=corner_color, width=2)
+        draw.line([(width - 50, height - 50 - corner_len), (width - 50, height - 50)], fill=corner_color, width=2)
+
+        # Save transition frame
+        transition_path = self._data_dir / "transition.png"
+        img.save(transition_path, 'PNG')
+        logger.info(f"Generated transition frame: {transition_path}")
+        return transition_path
+
+    async def _stream_transition(self, frame_path: str) -> bool:
+        """Stream a brief transition frame (2 seconds)."""
+        transition_duration = 2  # seconds
+
+        # Check for background music
+        music_path = self._data_dir.parent / "assets" / "music" / "background.mp3"
+        has_music = music_path.exists()
+
+        if has_music:
+            cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", frame_path,
+                "-stream_loop", "-1", "-i", str(music_path),
+                "-t", str(transition_duration),
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
+                "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                "-shortest", "-f", "flv", self.rtmp_full_url,
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", frame_path,
+                "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                "-t", str(transition_duration),
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
+                "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                "-shortest", "-f", "flv", self.rtmp_full_url,
+            ]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            while proc.returncode is None:
+                if self._stop_event.is_set():
+                    proc.terminate()
+                    await proc.wait()
+                    return False
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+
+            return proc.returncode == 0
+        except Exception as e:
+            logger.error(f"Error streaming transition: {e}")
+            return False
+
     async def _run_continuous_stream(self):
         """Run a continuous stream by cycling through images one at a time."""
         self.state = StreamState.RUNNING
 
         logger.info("Starting direct image streaming (no MP4 creation)...")
+
+        # Generate transition frame once
+        transition_frame = self._generate_transition_frame()
 
         while not self._stop_event.is_set():
             items = await self._get_approved_items()
@@ -217,6 +337,11 @@ class YouTubeStreamer:
                 if not success and not self._stop_event.is_set():
                     logger.error(f"Failed to stream item {item.id}, retrying in 5s...")
                     await asyncio.sleep(5)
+                    continue
+
+                # Stream transition frame between slides (prevents screen burn)
+                if not self._stop_event.is_set():
+                    await self._stream_transition(str(transition_frame))
 
     async def _stream_single_image(self, frame_path: str) -> bool:
         """Stream a single image for the configured duration."""

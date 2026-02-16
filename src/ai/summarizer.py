@@ -97,10 +97,33 @@ def _parse_summary_response(text: str, original_title: str) -> Dict[str, str]:
     }
 
 
+def _clean_summary_prefix(text: str) -> str:
+    """Remove common summary prefixes from text."""
+    import re
+
+    # Patterns to remove at the start (case-insensitive)
+    prefixes = [
+        r'^executive\s+summary\s*[:\-]?\s*',
+        r'^summary\s*[:\-]?\s*',
+        r'^overview\s*[:\-]?\s*',
+        r'^abstract\s*[:\-]?\s*',
+        r'^description\s*[:\-]?\s*',
+    ]
+
+    cleaned = text.strip()
+    for pattern in prefixes:
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+
+    return cleaned.strip()
+
+
 def _fallback_summary(title: str, description: str) -> Dict[str, str]:
     """Provide a fallback summary when LLM is unavailable."""
+    # Clean up any summary prefixes
+    cleaned_desc = _clean_summary_prefix(description)
+
     # Use first 2 sentences of description as summary
-    sentences = description.split('.')
+    sentences = cleaned_desc.split('.')
     summary = '. '.join(sentences[:2]).strip()
     if summary and not summary.endswith('.'):
         summary += '.'
