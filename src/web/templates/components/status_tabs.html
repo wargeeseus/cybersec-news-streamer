@@ -1,0 +1,44 @@
+<div class="tabs" id="status-tabs" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button class="tab active"
+                hx-get="/api/news?status=pending"
+                hx-target="#news-list"
+                hx-swap="innerHTML"
+                onclick="setActiveTab(this)">
+            Pending <span class="count">{{ counts.pending }}</span>
+        </button>
+        <button class="tab"
+                hx-get="/api/news?status=approved"
+                hx-target="#news-list"
+                hx-swap="innerHTML"
+                onclick="setActiveTab(this)">
+            Approved <span class="count">{{ counts.approved }}</span>
+        </button>
+        <button class="tab"
+                hx-get="/api/news?status=rejected"
+                hx-target="#news-list"
+                hx-swap="innerHTML"
+                onclick="setActiveTab(this)">
+            Rejected <span class="count">{{ counts.rejected }}</span>
+        </button>
+        <button class="tab"
+                hx-get="/api/news?status=streamed"
+                hx-target="#news-list"
+                hx-swap="innerHTML"
+                onclick="setActiveTab(this)">
+            Streamed <span class="count">{{ counts.streamed }}</span>
+        </button>
+    </div>
+    <button class="btn btn-approve"
+            hx-post="/api/news/fetch"
+            hx-target="#status-tabs"
+            hx-swap="outerHTML"
+            style="white-space: nowrap;">
+        Fetch News
+    </button>
+</div>
+{% if message %}
+<p style="margin-top: 10px; padding: 8px; background: rgba(0, 255, 136, 0.1); border-radius: 4px; color: var(--accent-green); font-size: 13px;">
+    {{ message }}
+</p>
+{% endif %}

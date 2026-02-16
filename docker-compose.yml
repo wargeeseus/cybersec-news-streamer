@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  web-portal:
+    build: .
+    container_name: cybersec-portal
+    ports:
+      - "${PORTAL_PORT:-8080}:8080"
+    volumes:
+      - ./data:/app/data
+      - ./assets:/app/assets
+    environment:
+      - YOUTUBE_STREAM_KEY=${YOUTUBE_STREAM_KEY}
+      - OLLAMA_HOST=${OLLAMA_HOST:-host.docker.internal}
+      - OLLAMA_PORT=${OLLAMA_PORT:-11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3:8b}
+      - FRAME_WIDTH=${FRAME_WIDTH:-1920}
+      - FRAME_HEIGHT=${FRAME_HEIGHT:-1080}
+      - NEWS_DISPLAY_SECONDS=${NEWS_DISPLAY_SECONDS:-30}
+      - NEWS_FETCH_INTERVAL_MINUTES=${NEWS_FETCH_INTERVAL_MINUTES:-5}
+      - DATABASE_PATH=/app/data/news.db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker:
+    build: .
+    container_name: cybersec-worker
+    command: python -m src.worker
+    volumes:
+      - ./data:/app/data
+      - ./assets:/app/assets
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-host.docker.internal}
+      - OLLAMA_PORT=${OLLAMA_PORT:-11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3:8b}
+      - FRAME_WIDTH=${FRAME_WIDTH:-1920}
+      - FRAME_HEIGHT=${FRAME_HEIGHT:-1080}
+      - NEWS_FETCH_INTERVAL_MINUTES=${NEWS_FETCH_INTERVAL_MINUTES:-5}
+      - DATABASE_PATH=/app/data/news.db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - web-portal
+    restart: unless-stopped
+
+  streamer:
+    build: .
+    container_name: cybersec-streamer
+    command: python -m src.streamer
+    volumes:
+      - ./data:/app/data
+      - ./assets:/app/assets
+    environment:
+      - YOUTUBE_STREAM_KEY=${YOUTUBE_STREAM_KEY}
+      - FRAME_WIDTH=${FRAME_WIDTH:-1920}
+      - FRAME_HEIGHT=${FRAME_HEIGHT:-1080}
+      - NEWS_DISPLAY_SECONDS=${NEWS_DISPLAY_SECONDS:-30}
+      - DATABASE_PATH=/app/data/news.db
+    depends_on:
+      - web-portal
+    restart: unless-stopped

@@ -1,0 +1,40 @@
+<div class="news-card {{ item.status }}" id="news-card-{{ item.id }}">
+    <h3 class="news-title">{{ item.title }}</h3>
+    <p class="news-summary">{{ item.summary }}</p>
+    <div class="news-meta">
+        <span class="news-source">{{ item.source_name }}</span>
+        <span>{{ item.fetched_at.strftime('%Y-%m-%d %H:%M') if item.fetched_at else 'Unknown' }}</span>
+        <span class="status-badge {{ item.status }}">{{ item.status }}</span>
+    </div>
+
+    {% if item.status == 'pending' or show_actions %}
+    <div class="news-actions">
+        {% if item.status == 'pending' %}
+        <button class="btn btn-approve"
+                hx-post="/api/news/{{ item.id }}/approve"
+                hx-target="#news-card-{{ item.id }}"
+                hx-swap="outerHTML">
+            ✓ Approve
+        </button>
+        <button class="btn btn-reject"
+                hx-post="/api/news/{{ item.id }}/reject"
+                hx-target="#news-card-{{ item.id }}"
+                hx-swap="outerHTML">
+            ✗ Reject
+        </button>
+        <button class="btn btn-edit"
+                hx-get="/api/news/{{ item.id }}/edit"
+                hx-target="#news-card-{{ item.id }}"
+                hx-swap="outerHTML">
+            ✎ Edit
+        </button>
+        {% endif %}
+        <button class="btn btn-preview" onclick="showPreview({{ item.id }})">
+            👁 Preview
+        </button>
+        <a href="{{ item.source_url }}" target="_blank" class="btn btn-edit">
+            🔗 Source
+        </a>
+    </div>
+    {% endif %}
+</div>

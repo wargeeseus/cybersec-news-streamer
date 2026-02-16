@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block content %}
+<header class="header">
+    <div class="header-left">
+        <span class="logo">CyberSec News Streamer</span>
+        <div class="live-badge">
+            <span class="live-dot {% if not stream_status.is_running %}offline{% endif %}"></span>
+            <span>{% if stream_status.is_running %}LIVE{% else %}OFFLINE{% endif %}</span>
+        </div>
+    </div>
+    <div class="header-right">
+        <span style="color: var(--text-secondary); font-size: 13px; margin-right: 15px;">
+            Auto-fetch &bull; Auto-stream
+        </span>
+        <a href="/logout" class="btn btn-logout" style="padding: 6px 12px; font-size: 12px; background: var(--bg-tertiary); color: var(--text-secondary); text-decoration: none; border-radius: 4px;">
+            Logout
+        </a>
+    </div>
+</header>
+
+<div class="main-content">
+    <div class="content-area">
+        <!-- Queue Stats -->
+        <div class="tabs" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <div class="tab active">
+                    Stream Queue <span class="count">{{ counts.approved }}</span>
+                </div>
+                <div class="tab">
+                    Streamed <span class="count">{{ counts.streamed }}</span>
+                </div>
+            </div>
+            <button class="btn btn-approve"
+                    hx-post="/api/news/fetch"
+                    hx-target="#news-list"
+                    hx-swap="innerHTML"
+                    style="white-space: nowrap;">
+                Fetch Now
+            </button>
+        </div>
+
+        {% if stream_status.current_item_title %}
+        <div style="margin: 15px 0; padding: 12px; background: rgba(0, 255, 136, 0.1); border: 1px solid var(--accent-green); border-radius: 8px;">
+            <strong style="color: var(--accent-green);">NOW STREAMING:</strong>
+            <span style="margin-left: 10px;">{{ stream_status.current_item_title }}</span>
+        </div>
+        {% endif %}
+
+        <!-- News Queue List -->
+        <div class="news-grid" id="news-list">
+            {% for item in queue_items %}
+            <div class="news-card {% if item.id == stream_status.current_item_id %}streaming{% endif %}">
+                <div class="news-header">
+                    <span class="source">{{ item.source_name }}</span>
+                    {% if item.id == stream_status.current_item_id %}
+                    <span class="status-badge approved" style="font-size: 10px;">STREAMING</span>
+                    {% endif %}
+                </div>
+                <h3 class="news-title">{{ item.title }}</h3>
+                <p class="news-summary">{{ item.summary }}</p>
+                <div class="news-footer">
+                    <span class="time">{{ item.fetched_at.strftime('%H:%M') if item.fetched_at else '' }}</span>
+                    <a href="{{ item.source_url }}" target="_blank" class="source-link">View Source</a>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <h4>No news items in queue</h4>
+                <p>News will be auto-fetched from RSS feeds</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <aside class="sidebar">
+        <!-- Stream Control Panel -->
+        <div id="stream-status"
+             hx-get="/api/stream/status"
+             hx-trigger="every 5s"
+             hx-swap="innerHTML">
+            {% include "components/stream_status.html" %}
+        </div>
+    </aside>
+</div>
+
+<style>
+.news-card.streaming {
+    border: 2px solid var(--accent-green);
+    box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
+}
+.header-right {
+    display: flex;
+    align-items: center;
+}
+</style>
+{% endblock %}

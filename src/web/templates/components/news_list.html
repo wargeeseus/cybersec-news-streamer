@@ -1,0 +1,16 @@
+{% for item in items %}
+    {% include "components/news_card.html" %}
+{% else %}
+    <div class="empty-state">
+        <h4>No {{ status }} news items</h4>
+        {% if status == 'pending' %}
+        <p>News will appear here when fetched from RSS feeds</p>
+        {% elif status == 'approved' %}
+        <p>Approve pending items to add them here</p>
+        {% elif status == 'rejected' %}
+        <p>Rejected items will appear here</p>
+        {% else %}
+        <p>Streamed items will appear here after going live</p>
+        {% endif %}
+    </div>
+{% endfor %}

@@ -1,0 +1,24 @@
+{% if message %}
+<div style="margin-bottom: 15px; padding: 10px; background: rgba(0, 170, 255, 0.1); border-radius: 6px; color: var(--accent-blue); font-size: 13px;">
+    {{ message }}
+</div>
+{% endif %}
+
+{% for item in items %}
+<div class="news-card">
+    <div class="news-header">
+        <span class="source">{{ item.source_name }}</span>
+    </div>
+    <h3 class="news-title">{{ item.title }}</h3>
+    <p class="news-summary">{{ item.summary }}</p>
+    <div class="news-footer">
+        <span class="time">{{ item.fetched_at.strftime('%H:%M') if item.fetched_at else '' }}</span>
+        <a href="{{ item.source_url }}" target="_blank" class="source-link">View Source</a>
+    </div>
+</div>
+{% else %}
+<div class="empty-state">
+    <h4>No news items in queue</h4>
+    <p>News will be auto-fetched from RSS feeds</p>
+</div>
+{% endfor %}

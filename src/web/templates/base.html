@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberSec News Streamer</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a2e;
+            --text-primary: #ffffff;
+            --text-secondary: #888888;
+            --accent-green: #00ff88;
+            --accent-blue: #00aaff;
+            --accent-red: #ff0066;
+            --border-color: #2a2a3e;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 20px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--accent-green);
+        }
+
+        .live-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 0, 102, 0.2);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            color: var(--accent-red);
+        }
+
+        .live-dot {
+            width: 10px;
+            height: 10px;
+            background: var(--accent-red);
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        .live-dot.offline {
+            background: var(--text-secondary);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--text-secondary);
+        }
+
+        .tab:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .tab.active {
+            background: var(--accent-green);
+            color: var(--bg-primary);
+            border-color: var(--accent-green);
+        }
+
+        .tab .count {
+            margin-left: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+
+        /* News Grid */
+        .news-grid {
+            display: grid;
+            gap: 20px;
+        }
+
+        /* News Card */
+        .news-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.2s;
+        }
+
+        .news-card:hover {
+            border-color: var(--accent-green);
+        }
+
+        .news-card.approved {
+            border-left: 4px solid var(--accent-green);
+        }
+
+        .news-card.rejected {
+            border-left: 4px solid var(--accent-red);
+            opacity: 0.6;
+        }
+
+        .news-card.streamed {
+            border-left: 4px solid var(--accent-blue);
+            opacity: 0.7;
+        }
+
+        .news-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--accent-green);
+        }
+
+        .news-summary {
+            color: var(--text-primary);
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .news-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+        }
+
+        .news-source {
+            color: var(--accent-blue);
+        }
+
+        .news-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-approve {
+            background: var(--accent-green);
+            color: var(--bg-primary);
+        }
+
+        .btn-approve:hover {
+            filter: brightness(1.1);
+        }
+
+        .btn-reject {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .btn-reject:hover {
+            filter: brightness(1.1);
+        }
+
+        .btn-edit {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-edit:hover {
+            background: var(--border-color);
+        }
+
+        .btn-preview {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-stream {
+            background: var(--accent-red);
+            color: white;
+            padding: 10px 24px;
+        }
+
+        .btn-stream.stop {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        /* Stream Status Panel */
+        .stream-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stream-panel h3 {
+            margin-bottom: 15px;
+            color: var(--accent-green);
+        }
+
+        .stream-info {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        /* Edit Form */
+        .edit-form {
+            background: var(--bg-tertiary);
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        /* Status badge */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .status-badge.pending {
+            background: rgba(136, 136, 136, 0.2);
+            color: var(--text-secondary);
+        }
+
+        .status-badge.approved {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--accent-green);
+        }
+
+        .status-badge.rejected {
+            background: rgba(255, 0, 102, 0.2);
+            color: var(--accent-red);
+        }
+
+        .status-badge.streamed {
+            background: rgba(0, 170, 255, 0.2);
+            color: var(--accent-blue);
+        }
+
+        /* HTMX loading indicator */
+        .htmx-indicator {
+            opacity: 0;
+            transition: opacity 200ms ease-in;
+        }
+
+        .htmx-request .htmx-indicator {
+            opacity: 1;
+        }
+
+        .htmx-request.htmx-indicator {
+            opacity: 1;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state h4 {
+            margin-bottom: 10px;
+        }
+
+        /* Layout */
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        @media (min-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr 350px;
+            }
+        }
+
+        .sidebar {
+            position: sticky;
+            top: 20px;
+        }
+
+        /* Preview Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            max-width: 90%;
+            max-height: 90%;
+        }
+
+        .modal-content img {
+            max-width: 100%;
+            max-height: 80vh;
+            border-radius: 8px;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 30px;
+            color: white;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Preview Modal -->
+    <div id="preview-modal" class="modal" onclick="closeModal()">
+        <span class="modal-close">&times;</span>
+        <div class="modal-content">
+            <img id="preview-image" src="" alt="Frame Preview">
+        </div>
+    </div>
+
+    <script>
+        // Global flag to pause refresh while editing config
+        window.isEditingConfig = false;
+
+        function showPreview(itemId) {
+            const modal = document.getElementById('preview-modal');
+            const img = document.getElementById('preview-image');
+            img.src = '/api/news/' + itemId + '/preview';
+            modal.classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('preview-modal').classList.remove('active');
+        }
+
+        function toggleConfig() {
+            const display = document.getElementById('config-display');
+            const form = document.getElementById('config-form');
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+                display.style.display = 'none';
+                window.isEditingConfig = true;
+            } else {
+                form.style.display = 'none';
+                display.style.display = 'block';
+                window.isEditingConfig = false;
+            }
+        }
+
+        function togglePreview() {
+            const preview = document.getElementById('stream-preview');
+            if (preview.style.display === 'none') {
+                preview.style.display = 'block';
+                // Refresh the frame preview
+                refreshFramePreview();
+            } else {
+                preview.style.display = 'none';
+            }
+        }
+
+        function refreshFramePreview() {
+            const img = document.getElementById('frame-preview-img');
+            if (img) {
+                // Add timestamp to bust cache
+                const src = img.src.split('?')[0];
+                img.src = src + '?t=' + Date.now();
+            }
+        }
+
+        // Auto-refresh frame preview every 5 seconds when visible
+        setInterval(function() {
+            const preview = document.getElementById('stream-preview');
+            if (preview && preview.style.display !== 'none') {
+                refreshFramePreview();
+            }
+        }, 5000);
+
+        // Close on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeModal();
+        });
+
+        // Auto-refresh stream status (skip while editing config)
+        setInterval(function() {
+            if (!window.isEditingConfig) {
+                htmx.trigger('#stream-status', 'refresh');
+            }
+        }, 5000);
+    </script>
+</body>
+</html>

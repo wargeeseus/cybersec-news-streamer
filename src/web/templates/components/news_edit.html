@@ -1,0 +1,34 @@
+<div class="news-card" id="news-card-{{ item.id }}">
+    <form class="edit-form"
+          hx-put="/api/news/{{ item.id }}"
+          hx-target="#news-card-{{ item.id }}"
+          hx-swap="outerHTML">
+        <div class="form-group">
+            <label for="title-{{ item.id }}">Headline</label>
+            <input type="text"
+                   id="title-{{ item.id }}"
+                   name="title"
+                   value="{{ item.title }}">
+        </div>
+        <div class="form-group">
+            <label for="summary-{{ item.id }}">Summary</label>
+            <textarea id="summary-{{ item.id }}"
+                      name="summary">{{ item.summary }}</textarea>
+        </div>
+        <div class="news-meta">
+            <span class="news-source">{{ item.source_name }}</span>
+            <span>Original: {{ item.original_title[:50] }}...</span>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-edit"
+                    hx-get="/api/news?status=pending"
+                    hx-target="#news-list"
+                    hx-swap="innerHTML">
+                Cancel
+            </button>
+            <button type="submit" class="btn btn-approve">
+                Save Changes
+            </button>
+        </div>
+    </form>
+</div>
