@@ -320,11 +320,10 @@ class YouTubeStreamer:
                 if self._stop_event.is_set():
                     break
 
-                # Generate frame if needed
-                if not item.frame_path or not Path(item.frame_path).exists():
-                    frame_path = generate_frame(item)
-                    await update_news_item(item.id, NewsItemUpdate(frame_path=str(frame_path)))
-                    item.frame_path = str(frame_path)
+                # Always regenerate frame to ensure current date is shown (24/7 stream)
+                frame_path = generate_frame(item)
+                await update_news_item(item.id, NewsItemUpdate(frame_path=str(frame_path)))
+                item.frame_path = str(frame_path)
 
                 self.current_item_id = item.id
                 self.current_item_title = item.title[:50]
