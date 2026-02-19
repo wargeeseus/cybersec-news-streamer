@@ -53,7 +53,7 @@ class YouTubeStreamer:
         self._current_frame = self._data_dir / "current_frame.png"
         self._playlist_file = self._data_dir / "playlist.txt"
         self._background_video = self._data_dir / "background" / "background_loop.mp4"
-        self._music_path = self._data_dir.parent / "assets" / "music" / "background.mp3"
+        self._music_path = settings.assets_path / "music" / "background.mp3"
 
     async def load_config_from_db(self):
         """Load configuration from database."""
@@ -116,6 +116,7 @@ class YouTubeStreamer:
 
         mode = "BROADCAST" if self._broadcast_mode else "SIMPLE"
         logger.info(f"Starting YouTube stream in {mode} mode with auto-restart...")
+        logger.info(f"Music path: {self._music_path} (exists: {self._music_path.exists()})")
 
         # Generate background video if in broadcast mode and doesn't exist
         if self._broadcast_mode and not self._background_video.exists():
