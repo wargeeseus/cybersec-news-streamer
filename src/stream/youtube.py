@@ -23,9 +23,9 @@ class StreamState(str, Enum):
 
 
 class YouTubeStreamer:
-    """Manages FFmpeg streaming to YouTube Live with continuous slideshow."""
+    """Manages FFmpeg streaming to YouTube Live - supports simple and broadcast modes."""
 
-    def __init__(self):
+    def __init__(self, broadcast_mode: bool = False):
         self.process: Optional[subprocess.Popen] = None
         self.state = StreamState.STOPPED
         self.current_item_id: Optional[int] = None
@@ -33,14 +33,18 @@ class YouTubeStreamer:
         self._stop_event = asyncio.Event()
         self._slideshow_task: Optional[asyncio.Task] = None
 
-        # Runtime config (can be updated from web UI)
+        # Stream mode
+        self._broadcast_mode = broadcast_mode
+
+        # Runtime config
         self._stream_key: str = settings.youtube_stream_key
         self._rtmp_url: str = "rtmp://a.rtmp.youtube.com/live2"
         self._display_seconds: int = settings.news_display_seconds
+        self._channel_id: Optional[int] = None
 
         # Auto-restart settings
         self._max_retries: int = 10
-        self._retry_delay: int = 5  # seconds
+        self._retry_delay: int = 5
         self._consecutive_failures: int = 0
 
         # Paths
@@ -48,6 +52,8 @@ class YouTubeStreamer:
         self._frames_dir = self._data_dir / "frames"
         self._current_frame = self._data_dir / "current_frame.png"
         self._playlist_file = self._data_dir / "playlist.txt"
+        self._background_video = self._data_dir / "background" / "background_loop.mp4"
+        self._music_path = self._data_dir.parent / "assets" / "music" / "background.mp3"
 
     async def load_config_from_db(self):
         """Load configuration from database."""
@@ -62,7 +68,9 @@ class YouTubeStreamer:
         if display_seconds:
             self._display_seconds = int(display_seconds)
 
-    def update_config(self, stream_key: str = None, rtmp_url: str = None, display_seconds: int = None):
+    def update_config(self, stream_key: str = None, rtmp_url: str = None,
+                      display_seconds: int = None, channel_id: int = None,
+                      broadcast_mode: bool = None):
         """Update stream configuration at runtime."""
         if stream_key is not None:
             self._stream_key = stream_key
@@ -70,7 +78,11 @@ class YouTubeStreamer:
             self._rtmp_url = rtmp_url
         if display_seconds is not None:
             self._display_seconds = display_seconds
-        logger.info(f"Stream config updated: key={'*' * 8 if self._stream_key else 'not set'}")
+        if channel_id is not None:
+            self._channel_id = channel_id
+        if broadcast_mode is not None:
+            self._broadcast_mode = broadcast_mode
+        logger.info(f"Stream config updated: key={'*' * 8 if self._stream_key else 'not set'}, broadcast={self._broadcast_mode}")
 
     @property
     def stream_key(self) -> str:
@@ -85,12 +97,11 @@ class YouTubeStreamer:
         return self.state == StreamState.RUNNING
 
     async def start(self):
-        """Start the continuous slideshow stream with auto-restart."""
+        """Start the stream with auto-restart."""
         if self.state == StreamState.RUNNING:
             logger.warning("Stream already running")
             return
 
-        # Load config from DB
         await self.load_config_from_db()
 
         if not self._stream_key:
@@ -103,17 +114,21 @@ class YouTubeStreamer:
         self._frames_dir.mkdir(parents=True, exist_ok=True)
         self._consecutive_failures = 0
 
-        logger.info("Starting YouTube stream with auto-restart enabled...")
+        mode = "BROADCAST" if self._broadcast_mode else "SIMPLE"
+        logger.info(f"Starting YouTube stream in {mode} mode with auto-restart...")
+
+        # Generate background video if in broadcast mode and doesn't exist
+        if self._broadcast_mode and not self._background_video.exists():
+            logger.info("Generating animated background (first time only)...")
+            await self._generate_background()
 
         while not self._stop_event.is_set():
             try:
-                # Generate initial frames
-                await self._prepare_frames()
+                if self._broadcast_mode:
+                    await self._run_broadcast_stream()
+                else:
+                    await self._run_continuous_stream()
 
-                # Start the continuous stream
-                await self._run_continuous_stream()
-
-                # If we get here normally (not stopped), it means stream ended
                 if not self._stop_event.is_set():
                     self._consecutive_failures += 1
                     if self._consecutive_failures >= self._max_retries:
@@ -121,7 +136,7 @@ class YouTubeStreamer:
                         self.state = StreamState.ERROR
                         break
 
-                    logger.warning(f"Stream ended unexpectedly, restarting in {self._retry_delay}s... (attempt {self._consecutive_failures}/{self._max_retries})")
+                    logger.warning(f"Stream ended, restarting in {self._retry_delay}s... ({self._consecutive_failures}/{self._max_retries})")
                     await asyncio.sleep(self._retry_delay)
 
             except Exception as e:
@@ -132,11 +147,9 @@ class YouTubeStreamer:
                     break
 
                 if self._consecutive_failures >= self._max_retries:
-                    logger.error(f"Stream failed {self._max_retries} times, giving up")
                     self.state = StreamState.ERROR
                     break
 
-                logger.info(f"Restarting stream in {self._retry_delay}s... (attempt {self._consecutive_failures}/{self._max_retries})")
                 await asyncio.sleep(self._retry_delay)
 
         self._cleanup()
@@ -161,45 +174,280 @@ class YouTubeStreamer:
         self.current_item_id = None
         self.current_item_title = None
 
-    async def _prepare_frames(self) -> List[Path]:
-        """Generate frames for all approved items."""
-        items = await get_news_items_by_status(NewsStatus.APPROVED, limit=25)
-        frame_paths = []
+    async def _generate_background(self):
+        """Generate the animated background video."""
+        from ..video.broadcast_frame import generate_background_video
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: generate_background_video(duration_seconds=30, fps=15)
+        )
 
-        for item in items:
-            if not item.frame_path or not Path(item.frame_path).exists():
-                frame_path = generate_frame(item)
-                await update_news_item(item.id, NewsItemUpdate(frame_path=str(frame_path)))
-            else:
-                frame_path = Path(item.frame_path)
-            frame_paths.append(frame_path)
-
-        logger.info(f"Prepared {len(frame_paths)} frames")
-        return frame_paths
-
-    async def _get_approved_items(self) -> List[NewsItem]:
-        """Get all approved items."""
+    async def _get_items(self) -> List[NewsItem]:
+        """Get approved items for current channel."""
+        if self._channel_id:
+            return await get_news_items_by_status(NewsStatus.APPROVED, limit=25, channel_id=self._channel_id)
         return await get_news_items_by_status(NewsStatus.APPROVED, limit=25)
 
+    # ==================== SIMPLE MODE ====================
+
+    async def _run_continuous_stream(self):
+        """Simple mode: cycle through static images."""
+        self.state = StreamState.RUNNING
+        logger.info("Starting simple image streaming...")
+
+        transition_frame = self._generate_transition_frame()
+
+        while not self._stop_event.is_set():
+            items = await self._get_items()
+
+            if not items:
+                logger.info("No approved items, waiting...")
+                await asyncio.sleep(10)
+                continue
+
+            for item in items:
+                if self._stop_event.is_set():
+                    break
+
+                # Always regenerate frame for current date
+                frame_path = generate_frame(item)
+                await update_news_item(item.id, NewsItemUpdate(frame_path=str(frame_path)))
+                item.frame_path = str(frame_path)
+
+                self.current_item_id = item.id
+                self.current_item_title = item.title[:50]
+
+                logger.info(f"Streaming: {item.title[:40]}...")
+
+                success = await self._stream_single_image(item.frame_path)
+
+                if not success and not self._stop_event.is_set():
+                    logger.error(f"Failed to stream item {item.id}, retrying...")
+                    await asyncio.sleep(5)
+                    continue
+
+                # Transition
+                if not self._stop_event.is_set():
+                    await self._stream_transition(str(transition_frame))
+
+    async def _stream_single_image(self, frame_path: str) -> bool:
+        """Stream a single image for the configured duration."""
+        has_music = self._music_path.exists()
+
+        if has_music:
+            cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", frame_path,
+                "-stream_loop", "-1", "-i", str(self._music_path),
+                "-t", str(self._display_seconds),
+                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage",
+                "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
+                "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                "-shortest", "-f", "flv", self.rtmp_full_url,
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", frame_path,
+                "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                "-t", str(self._display_seconds),
+                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage",
+                "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
+                "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                "-shortest", "-f", "flv", self.rtmp_full_url,
+            ]
+
+        return await self._run_ffmpeg(cmd)
+
+    # ==================== BROADCAST MODE ====================
+
+    async def _run_broadcast_stream(self):
+        """Broadcast mode: animated background, overlay, scrolling ticker."""
+        from ..video.broadcast_frame import generate_broadcast_overlay, get_ticker_text
+
+        self.state = StreamState.RUNNING
+        logger.info("Starting broadcast stream with animations...")
+
+        while not self._stop_event.is_set():
+            items = await self._get_items()
+
+            if not items:
+                logger.info("No approved items, waiting...")
+                await asyncio.sleep(10)
+                continue
+
+            for i, item in enumerate(items):
+                if self._stop_event.is_set():
+                    break
+
+                self.current_item_id = item.id
+                self.current_item_title = item.title[:50]
+
+                # Generate overlay image
+                logger.info(f"Generating overlay for: {item.title[:40]}...")
+                overlay_path = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: generate_broadcast_overlay(item, items)
+                )
+
+                # Get ticker text
+                ticker_text = get_ticker_text(items, i)
+
+                # Stream with compositing
+                logger.info(f"Streaming broadcast: {item.title[:40]}...")
+                success = await self._stream_broadcast_segment(overlay_path, ticker_text)
+
+                if not success and not self._stop_event.is_set():
+                    await asyncio.sleep(5)
+                    continue
+
+                self._consecutive_failures = 0
+
+    async def _stream_broadcast_segment(self, overlay_path: Path, ticker_text: str) -> bool:
+        """Stream a broadcast segment with animated background and scrolling ticker."""
+        has_music = self._music_path.exists()
+        has_bg = self._background_video.exists()
+
+        # Escape special characters for FFmpeg drawtext
+        safe_ticker = ticker_text.replace("'", "'\\''").replace(":", "\\:")
+
+        # Calculate scroll speed (pixels per second)
+        # Text should scroll across screen in about 20 seconds
+        scroll_speed = 80  # pixels per second
+
+        # FFmpeg filter for scrolling ticker
+        ticker_filter = (
+            f"drawtext=text='{safe_ticker}  ★  {safe_ticker}':"
+            f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf:"
+            f"fontsize=28:fontcolor=white:"
+            f"x='w-mod(t*{scroll_speed}\\,w+tw)':"  # Scroll from right to left
+            f"y=h-45"  # Position in ticker bar
+        )
+
+        if has_bg:
+            # Full broadcast mode with animated background
+            filter_complex = (
+                f"[0:v]loop=-1:size=450[bg];"  # Loop background
+                f"[bg][1:v]overlay=0:0[main];"  # Overlay news on background
+                f"[main]{ticker_filter}[out]"  # Add scrolling ticker
+            )
+
+            if has_music:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-stream_loop", "-1", "-i", str(self._background_video),
+                    "-i", str(overlay_path),
+                    "-stream_loop", "-1", "-i", str(self._music_path),
+                    "-t", str(self._display_seconds),
+                    "-filter_complex", filter_complex,
+                    "-map", "[out]", "-map", "2:a",
+                    "-c:v", "libx264", "-preset", "veryfast",
+                    "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
+                    "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                    "-shortest", "-f", "flv", self.rtmp_full_url,
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-stream_loop", "-1", "-i", str(self._background_video),
+                    "-i", str(overlay_path),
+                    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                    "-t", str(self._display_seconds),
+                    "-filter_complex", filter_complex,
+                    "-map", "[out]", "-map", "2:a",
+                    "-c:v", "libx264", "-preset", "veryfast",
+                    "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
+                    "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                    "-shortest", "-f", "flv", self.rtmp_full_url,
+                ]
+        else:
+            # Fallback: use overlay image with ticker animation only
+            filter_complex = f"[0:v]{ticker_filter}[out]"
+
+            if has_music:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-loop", "1", "-i", str(overlay_path),
+                    "-stream_loop", "-1", "-i", str(self._music_path),
+                    "-t", str(self._display_seconds),
+                    "-filter_complex", filter_complex,
+                    "-map", "[out]", "-map", "1:a",
+                    "-c:v", "libx264", "-preset", "veryfast",
+                    "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
+                    "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                    "-shortest", "-f", "flv", self.rtmp_full_url,
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-loop", "1", "-i", str(overlay_path),
+                    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                    "-t", str(self._display_seconds),
+                    "-filter_complex", filter_complex,
+                    "-map", "[out]", "-map", "1:a",
+                    "-c:v", "libx264", "-preset", "veryfast",
+                    "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
+                    "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                    "-shortest", "-f", "flv", self.rtmp_full_url,
+                ]
+
+        return await self._run_ffmpeg(cmd)
+
+    # ==================== COMMON METHODS ====================
+
+    async def _run_ffmpeg(self, cmd: List[str]) -> bool:
+        """Run FFmpeg command and wait for completion."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            while proc.returncode is None:
+                if self._stop_event.is_set():
+                    proc.terminate()
+                    await proc.wait()
+                    return False
+
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+
+            if proc.returncode != 0:
+                stderr = await proc.stderr.read()
+                logger.error(f"FFmpeg error: {stderr.decode()[-500:]}")
+                return False
+
+            self._consecutive_failures = 0
+            return True
+
+        except Exception as e:
+            logger.error(f"FFmpeg error: {e}")
+            return False
+
     def _generate_transition_frame(self) -> Path:
-        """Generate a transition frame to prevent screen burn."""
+        """Generate a transition frame."""
         from PIL import Image, ImageDraw, ImageFont
+        import math
 
         width = settings.frame_width
         height = settings.frame_height
 
-        # Create gradient-like transition with animated feel
         img = Image.new('RGB', (width, height), '#050508')
         draw = ImageDraw.Draw(img)
 
-        # Draw subtle grid pattern (different from news frames)
-        grid_color = '#0a0a12'
+        # Grid pattern
         for x in range(0, width, 40):
-            draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
+            draw.line([(x, 0), (x, height)], fill='#0a0a12', width=1)
         for y in range(0, height, 40):
-            draw.line([(0, y), (width, y)], fill=grid_color, width=1)
+            draw.line([(0, y), (width, y)], fill='#0a0a12', width=1)
 
-        # Center logo/branding
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 48)
             small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 24)
@@ -207,56 +455,41 @@ class YouTubeStreamer:
             font = ImageFont.load_default()
             small_font = font
 
-        # Main title
         title = "CYBERSEC NEWS"
-        title_bbox = draw.textbbox((0, 0), title, font=font)
-        title_width = title_bbox[2] - title_bbox[0]
-        title_x = (width - title_width) // 2
-        draw.text((title_x, height // 2 - 40), title, font=font, fill='#00ff88')
+        bbox = draw.textbbox((0, 0), title, font=font)
+        x = (width - (bbox[2] - bbox[0])) // 2
+        draw.text((x, height // 2 - 40), title, font=font, fill='#00ff88')
 
-        # Subtitle with animation hint
         subtitle = "• • •"
-        sub_bbox = draw.textbbox((0, 0), subtitle, font=small_font)
-        sub_width = sub_bbox[2] - sub_bbox[0]
-        sub_x = (width - sub_width) // 2
-        draw.text((sub_x, height // 2 + 30), subtitle, font=small_font, fill='#00aaff')
+        bbox = draw.textbbox((0, 0), subtitle, font=small_font)
+        x = (width - (bbox[2] - bbox[0])) // 2
+        draw.text((x, height // 2 + 30), subtitle, font=small_font, fill='#00aaff')
 
-        # Decorative corners
-        corner_color = '#00ff88'
-        corner_len = 50
-        # Top left
-        draw.line([(50, 50), (50 + corner_len, 50)], fill=corner_color, width=2)
-        draw.line([(50, 50), (50, 50 + corner_len)], fill=corner_color, width=2)
-        # Top right
-        draw.line([(width - 50 - corner_len, 50), (width - 50, 50)], fill=corner_color, width=2)
-        draw.line([(width - 50, 50), (width - 50, 50 + corner_len)], fill=corner_color, width=2)
-        # Bottom left
-        draw.line([(50, height - 50), (50 + corner_len, height - 50)], fill=corner_color, width=2)
-        draw.line([(50, height - 50 - corner_len), (50, height - 50)], fill=corner_color, width=2)
-        # Bottom right
-        draw.line([(width - 50 - corner_len, height - 50), (width - 50, height - 50)], fill=corner_color, width=2)
-        draw.line([(width - 50, height - 50 - corner_len), (width - 50, height - 50)], fill=corner_color, width=2)
+        # Corner decorations
+        c = '#00ff88'
+        draw.line([(50, 50), (100, 50)], fill=c, width=2)
+        draw.line([(50, 50), (50, 100)], fill=c, width=2)
+        draw.line([(width-100, 50), (width-50, 50)], fill=c, width=2)
+        draw.line([(width-50, 50), (width-50, 100)], fill=c, width=2)
+        draw.line([(50, height-50), (100, height-50)], fill=c, width=2)
+        draw.line([(50, height-100), (50, height-50)], fill=c, width=2)
+        draw.line([(width-100, height-50), (width-50, height-50)], fill=c, width=2)
+        draw.line([(width-50, height-100), (width-50, height-50)], fill=c, width=2)
 
-        # Save transition frame
-        transition_path = self._data_dir / "transition.png"
-        img.save(transition_path, 'PNG')
-        logger.info(f"Generated transition frame: {transition_path}")
-        return transition_path
+        path = self._data_dir / "transition.png"
+        img.save(path, 'PNG')
+        return path
 
     async def _stream_transition(self, frame_path: str) -> bool:
-        """Stream a brief transition frame (3 seconds)."""
-        transition_duration = 3  # seconds
-
-        # Check for background music
-        music_path = self._data_dir.parent / "assets" / "music" / "background.mp3"
-        has_music = music_path.exists()
+        """Stream a transition frame."""
+        has_music = self._music_path.exists()
 
         if has_music:
             cmd = [
                 "ffmpeg", "-y",
                 "-loop", "1", "-i", frame_path,
-                "-stream_loop", "-1", "-i", str(music_path),
-                "-t", str(transition_duration),
+                "-stream_loop", "-1", "-i", str(self._music_path),
+                "-t", "3",  # 3 second transition
                 "-c:v", "libx264", "-preset", "ultrafast",
                 "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
                 "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
@@ -268,7 +501,7 @@ class YouTubeStreamer:
                 "ffmpeg", "-y",
                 "-loop", "1", "-i", frame_path,
                 "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-                "-t", str(transition_duration),
+                "-t", "3",
                 "-c:v", "libx264", "-preset", "ultrafast",
                 "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
                 "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
@@ -276,358 +509,14 @@ class YouTubeStreamer:
                 "-shortest", "-f", "flv", self.rtmp_full_url,
             ]
 
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            while proc.returncode is None:
-                if self._stop_event.is_set():
-                    proc.terminate()
-                    await proc.wait()
-                    return False
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=0.5)
-                except asyncio.TimeoutError:
-                    continue
-
-            return proc.returncode == 0
-        except Exception as e:
-            logger.error(f"Error streaming transition: {e}")
-            return False
-
-    async def _run_continuous_stream(self):
-        """Run a continuous stream by cycling through images one at a time."""
-        self.state = StreamState.RUNNING
-
-        logger.info("Starting direct image streaming (no MP4 creation)...")
-
-        # Generate transition frame once
-        transition_frame = self._generate_transition_frame()
-
-        while not self._stop_event.is_set():
-            items = await self._get_approved_items()
-
-            if not items:
-                logger.info("No approved items, waiting...")
-                await asyncio.sleep(10)
-                continue
-
-            # Stream each image one at a time
-            for item in items:
-                if self._stop_event.is_set():
-                    break
-
-                # Always regenerate frame to ensure current date is shown (24/7 stream)
-                frame_path = generate_frame(item)
-                await update_news_item(item.id, NewsItemUpdate(frame_path=str(frame_path)))
-                item.frame_path = str(frame_path)
-
-                self.current_item_id = item.id
-                self.current_item_title = item.title[:50]
-
-                logger.info(f"Streaming: {item.title[:40]}...")
-
-                # Stream this single image
-                success = await self._stream_single_image(item.frame_path)
-
-                if not success and not self._stop_event.is_set():
-                    logger.error(f"Failed to stream item {item.id}, retrying in 5s...")
-                    await asyncio.sleep(5)
-                    continue
-
-                # Stream transition frame between slides (prevents screen burn)
-                if not self._stop_event.is_set():
-                    logger.info("Streaming transition...")
-                    await self._stream_transition(str(transition_frame))
-
-    async def _stream_single_image(self, frame_path: str) -> bool:
-        """Stream a single image for the configured duration."""
-        # Check for background music
-        music_path = self._data_dir.parent / "assets" / "music" / "background.mp3"
-        has_music = music_path.exists()
-
-        if has_music:
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-loop", "1",
-                "-i", frame_path,
-                "-stream_loop", "-1",
-                "-i", str(music_path),
-                "-t", str(self._display_seconds),
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-tune", "stillimage",
-                "-pix_fmt", "yuv420p",
-                "-r", "30",
-                "-g", "60",
-                "-b:v", "4500k",
-                "-maxrate", "4500k",
-                "-bufsize", "9000k",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-shortest",
-                "-f", "flv",
-                self.rtmp_full_url,
-            ]
-        else:
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-loop", "1",
-                "-i", frame_path,
-                "-f", "lavfi",
-                "-i", "anullsrc=r=44100:cl=stereo",
-                "-t", str(self._display_seconds),
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-tune", "stillimage",
-                "-pix_fmt", "yuv420p",
-                "-r", "30",
-                "-g", "60",
-                "-b:v", "4500k",
-                "-maxrate", "4500k",
-                "-bufsize", "9000k",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-shortest",
-                "-f", "flv",
-                self.rtmp_full_url,
-            ]
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            # Wait for completion or stop signal
-            while proc.returncode is None:
-                if self._stop_event.is_set():
-                    proc.terminate()
-                    await proc.wait()
-                    return False
-
-                # Check every 0.5 seconds
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=0.5)
-                except asyncio.TimeoutError:
-                    continue
-
-            if proc.returncode != 0:
-                stderr = await proc.stderr.read()
-                error_msg = stderr.decode()[-500:]
-                logger.error(f"FFmpeg error streaming image: {error_msg}")
-
-                # Check for specific errors
-                if "Connection refused" in error_msg or "Connection timed out" in error_msg:
-                    logger.error("RTMP connection failed - will retry")
-                return False
-
-            # Success - reset failure counter
-            self._consecutive_failures = 0
-            return True
-
-        except Exception as e:
-            logger.error(f"Error streaming image: {e}")
-            return False
-
-    async def _create_playlist(self, items: List[NewsItem]):
-        """Create FFmpeg concat playlist file."""
-        lines = ["ffconcat version 1.0"]
-
-        for item in items:
-            if item.frame_path and Path(item.frame_path).exists():
-                # Escape single quotes in path
-                safe_path = str(item.frame_path).replace("'", "'\\''")
-                lines.append(f"file '{safe_path}'")
-                lines.append(f"duration {self._display_seconds}")
-
-        # Add last file again (required for concat to work properly)
-        if items and items[-1].frame_path:
-            safe_path = str(items[-1].frame_path).replace("'", "'\\''")
-            lines.append(f"file '{safe_path}'")
-
-        self._playlist_file.write_text("\n".join(lines))
-        logger.info(f"Created playlist with {len(items)} items")
-
-    async def _stream_slideshow(self, has_audio: bool, audio_path: Path):
-        """Stream slideshow by creating video first, then streaming in loop."""
-
-        # First, create a video file from the slideshow
-        video_file = self._data_dir / "slideshow.mp4"
-
-        logger.info("Creating slideshow video...")
-
-        # Create video from concat playlist
-        create_cmd = [
-            "ffmpeg",
-            "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(self._playlist_file),
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-tune", "stillimage",
-            "-pix_fmt", "yuv420p",
-            "-r", "30",
-            "-g", "60",
-            str(video_file),
-        ]
-
-        proc = subprocess.run(create_cmd, capture_output=True, timeout=300)
-        if proc.returncode != 0:
-            logger.error(f"Failed to create slideshow video: {proc.stderr.decode()[-500:]}")
-            return
-
-        logger.info(f"Slideshow video created: {video_file}")
-
-        # Now stream the video in a loop
-        if has_audio:
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-re",
-                "-stream_loop", "-1",
-                "-i", str(video_file),
-                "-stream_loop", "-1",
-                "-i", str(audio_path),
-                "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-pix_fmt", "yuv420p",
-                "-r", "30",
-                "-g", "60",
-                "-b:v", "4500k",
-                "-maxrate", "4500k",
-                "-bufsize", "9000k",
-                "-map", "0:v",
-                "-map", "1:a",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-f", "flv",
-                self.rtmp_full_url,
-            ]
-        else:
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-re",
-                "-stream_loop", "-1",
-                "-i", str(video_file),
-                "-f", "lavfi",
-                "-i", "anullsrc=r=44100:cl=stereo",
-                "-c:v", "copy",
-                "-map", "0:v",
-                "-map", "1:a",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-f", "flv",
-                self.rtmp_full_url,
-            ]
-
-        logger.info("Starting FFmpeg slideshow stream...")
-        logger.info(f"Streaming to: {self._rtmp_url}/****{self._stream_key[-4:] if self._stream_key else 'NONE'}")
-        logger.debug(f"FFmpeg command: {' '.join(cmd)}")
-
-        try:
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-
-            # Track current item for status display
-            items = await self._get_approved_items()
-            item_index = 0
-            last_switch = asyncio.get_event_loop().time()
-
-            while self.process.poll() is None:
-                if self._stop_event.is_set():
-                    self.process.terminate()
-                    return
-
-                # Update current item display
-                if items:
-                    current_time = asyncio.get_event_loop().time()
-                    if current_time - last_switch >= self._display_seconds:
-                        item_index = (item_index + 1) % len(items)
-                        last_switch = current_time
-
-                    current_item = items[item_index]
-                    self.current_item_id = current_item.id
-                    self.current_item_title = current_item.title[:50]
-
-                await asyncio.sleep(1)
-
-            # Check if FFmpeg exited with error
-            if self.process.returncode != 0:
-                stderr = self.process.stderr.read().decode() if self.process.stderr else ""
-                # Log the full error for debugging
-                logger.error(f"FFmpeg exited with code {self.process.returncode}")
-                # Look for specific RTMP errors
-                if "Connection refused" in stderr:
-                    logger.error("RTMP Connection refused - check stream key and URL")
-                elif "Server returned 403" in stderr:
-                    logger.error("RTMP 403 Forbidden - stream key may be invalid")
-                elif "Connection timed out" in stderr:
-                    logger.error("RTMP Connection timed out - check network")
-                elif "rtmp://" in stderr.lower():
-                    # Find and log the RTMP-related error
-                    for line in stderr.split('\n'):
-                        if 'rtmp' in line.lower() or 'error' in line.lower():
-                            logger.error(f"RTMP: {line.strip()}")
-                else:
-                    # Log last part of error
-                    logger.error(f"FFmpeg stderr (last 1000 chars): {stderr[-1000:]}")
-
-                # Wait before retry
-                await asyncio.sleep(5)
-
-        except Exception as e:
-            logger.error(f"FFmpeg error: {e}")
-            await asyncio.sleep(5)
-
-    async def _stream_waiting_screen(self):
-        """Stream a waiting screen when no items are approved."""
-        # Create a simple waiting frame
-        from PIL import Image, ImageDraw, ImageFont
-
-        img = Image.new('RGB', (settings.frame_width, settings.frame_height), '#0a0a0f')
-        draw = ImageDraw.Draw(img)
-
-        # Draw waiting message
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 48)
-        except:
-            font = ImageFont.load_default()
-
-        text = "Waiting for approved news..."
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        x = (settings.frame_width - text_width) // 2
-        y = settings.frame_height // 2
-
-        draw.text((x, y), text, font=font, fill='#00ff88')
-
-        waiting_frame = self._data_dir / "waiting.png"
-        img.save(waiting_frame)
-
-        self.current_item_id = None
-        self.current_item_title = "Waiting for content..."
+        return await self._run_ffmpeg(cmd)
 
     def _cleanup(self):
         """Clean up resources."""
         if self.process:
             try:
                 self.process.terminate()
-            except Exception:
+            except:
                 pass
             self.process = None
 
@@ -638,6 +527,7 @@ class YouTubeStreamer:
             "is_running": self.is_running,
             "current_item_id": self.current_item_id,
             "current_item_title": self.current_item_title,
+            "broadcast_mode": self._broadcast_mode,
         }
 
 

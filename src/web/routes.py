@@ -91,7 +91,12 @@ async def channel_stream_status(request: Request, channel_id: int):
 
 
 @router.post("/api/channel/{channel_id}/stream/start", response_class=HTMLResponse)
-async def start_channel_stream(request: Request, channel_id: int, background_tasks: BackgroundTasks):
+async def start_channel_stream(
+    request: Request,
+    channel_id: int,
+    background_tasks: BackgroundTasks,
+    broadcast_mode: bool = Form(False),
+):
     """Start streaming for a channel."""
     channel = await get_channel(channel_id)
     if not channel:
@@ -107,6 +112,7 @@ async def start_channel_stream(request: Request, channel_id: int, background_tas
         stream_key=channel.stream_key,
         rtmp_url=channel.rtmp_url,
         display_seconds=channel.display_seconds,
+        broadcast_mode=broadcast_mode,
     )
     manager._channel_id = channel_id  # Store channel ID for fetching news
     background_tasks.add_task(manager.start)
