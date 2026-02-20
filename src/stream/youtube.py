@@ -331,12 +331,12 @@ class YouTubeStreamer:
         # Text should scroll across screen in about 20 seconds
         scroll_speed = 80  # pixels per second
 
-        # FFmpeg filter for scrolling ticker
+        # FFmpeg filter for scrolling ticker (starts after UP NEXT label at x=150)
         ticker_filter = (
             f"drawtext=text='{safe_ticker}  ★  {safe_ticker}':"
             f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf:"
             f"fontsize=28:fontcolor=white:"
-            f"x='w-mod(t*{scroll_speed}\\,w+tw)':"  # Scroll from right to left
+            f"x='150 + w - mod(t*{scroll_speed}\\,w+tw)':"  # Start after label, scroll left
             f"y=h-45"  # Position in ticker bar
         )
 
