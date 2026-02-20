@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     portal_port: int = Field(default=8080, env="PORTAL_PORT")
     secret_key: str = Field(default="change-this-secret-key-in-production", env="SECRET_KEY")
 
+    # Timezone for display (e.g., "America/New_York", "Europe/London", "Asia/Kolkata")
+    timezone: str = Field(default="UTC", env="TIMEZONE")
+
     # Database
     database_path: str = Field(default="/app/data/news.db", env="DATABASE_PATH")
 

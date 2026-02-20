@@ -208,10 +208,15 @@ def _draw_header(draw: ImageDraw.Draw, width: int):
 
 def _draw_footer(draw: ImageDraw.Draw, width: int, height: int):
     """Draw the footer with today's date."""
-    from datetime import datetime
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
 
-    # Get current date
-    today = datetime.now()
+    # Get current date in configured timezone
+    try:
+        tz = ZoneInfo(settings.timezone)
+        today = datetime.now(tz)
+    except Exception:
+        today = datetime.now()
 
     footer_y = height - 80
 

@@ -71,9 +71,14 @@ def generate_broadcast_overlay(news_item: NewsItem, next_items: List[NewsItem] =
     title_font = get_font(36, bold=True)
     draw.text((150, 25), "CYBERSEC NEWS NETWORK", font=title_font, fill=COLORS["text_white"])
 
-    # Date/Time
+    # Date/Time in configured timezone
     from datetime import datetime
-    now = datetime.now()
+    from zoneinfo import ZoneInfo
+    try:
+        tz = ZoneInfo(settings.timezone)
+        now = datetime.now(tz)
+    except Exception:
+        now = datetime.now()
     time_font = get_font(30, bold=True)
     date_font = get_font(18)
     draw.text((width - 160, 20), now.strftime("%H:%M"), font=time_font, fill=COLORS["text_white"])

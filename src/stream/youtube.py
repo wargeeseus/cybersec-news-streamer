@@ -52,7 +52,8 @@ class YouTubeStreamer:
         self._frames_dir = self._data_dir / "frames"
         self._current_frame = self._data_dir / "current_frame.png"
         self._playlist_file = self._data_dir / "playlist.txt"
-        self._background_video = self._data_dir / "background" / "background_loop.mp4"
+        self._generated_bg_video = self._data_dir / "background" / "background_loop.mp4"
+        self._custom_bg_video = settings.assets_path / "video" / "background.mp4"
         self._music_path = settings.assets_path / "music" / "background.mp3"
 
     async def load_config_from_db(self):
@@ -96,6 +97,13 @@ class YouTubeStreamer:
     def is_running(self) -> bool:
         return self.state == StreamState.RUNNING
 
+    @property
+    def _background_video(self) -> Path:
+        """Get background video path - prefer custom over generated."""
+        if self._custom_bg_video.exists():
+            return self._custom_bg_video
+        return self._generated_bg_video
+
     async def start(self):
         """Start the stream with auto-restart."""
         if self.state == StreamState.RUNNING:
@@ -118,10 +126,15 @@ class YouTubeStreamer:
         logger.info(f"Starting YouTube stream in {mode} mode with auto-restart...")
         logger.info(f"Music path: {self._music_path} (exists: {self._music_path.exists()})")
 
-        # Generate background video if in broadcast mode and doesn't exist
-        if self._broadcast_mode and not self._background_video.exists():
-            logger.info("Generating animated background (first time only)...")
-            await self._generate_background()
+        # Check for background video in broadcast mode
+        if self._broadcast_mode:
+            if self._custom_bg_video.exists():
+                logger.info(f"Using custom background video: {self._custom_bg_video}")
+            elif not self._generated_bg_video.exists():
+                logger.info("No custom video found, generating animated background...")
+                await self._generate_background()
+            else:
+                logger.info(f"Using generated background: {self._generated_bg_video}")
 
         while not self._stop_event.is_set():
             try:
