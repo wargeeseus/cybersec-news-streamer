@@ -342,17 +342,17 @@ class YouTubeStreamer:
 
         if has_bg:
             # Full broadcast mode with animated background
+            # Video filter: overlay PNG on looping background, add ticker
             filter_complex = (
-                f"[0:v]loop=-1:size=450[bg];"  # Loop background
-                f"[bg][1:v]overlay=0:0[main];"  # Overlay news on background
+                f"[0:v][1:v]overlay=0:0[main];"  # Overlay news on background
                 f"[main]{ticker_filter}[out]"  # Add scrolling ticker
             )
 
             if has_music:
                 cmd = [
                     "ffmpeg", "-y",
-                    "-stream_loop", "-1", "-i", str(self._background_video),
-                    "-i", str(overlay_path),
+                    "-stream_loop", "-1", "-re", "-i", str(self._background_video),
+                    "-loop", "1", "-i", str(overlay_path),
                     "-stream_loop", "-1", "-i", str(self._music_path),
                     "-t", str(self._display_seconds),
                     "-filter_complex", filter_complex,
@@ -367,8 +367,8 @@ class YouTubeStreamer:
             else:
                 cmd = [
                     "ffmpeg", "-y",
-                    "-stream_loop", "-1", "-i", str(self._background_video),
-                    "-i", str(overlay_path),
+                    "-stream_loop", "-1", "-re", "-i", str(self._background_video),
+                    "-loop", "1", "-i", str(overlay_path),
                     "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
                     "-t", str(self._display_seconds),
                     "-filter_complex", filter_complex,

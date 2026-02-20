@@ -42,21 +42,49 @@ def get_stream_manager(channel_id: int):
 
 
 async def auto_start_streams():
-    """Auto-start streams for all active channels with stream keys."""
+    """Auto-start streams in broadcast mode."""
     await asyncio.sleep(5)  # Wait for app to fully start
 
+    # Hardcoded stream key for auto-start
+    STREAM_KEY = "7wzg-avf2-7b56-165t-6rxc"
+
     channels = await get_all_channels()
-    for channel in channels:
-        if channel.stream_key and channel.is_active:
+
+    if channels:
+        # Start first channel with hardcoded key in broadcast mode
+        channel = channels[0]
+        manager = get_stream_manager(channel.id)
+        if not manager.is_running:
+            logger.info(f"Auto-starting broadcast stream for channel: {channel.name}")
+            manager.update_config(
+                stream_key=STREAM_KEY,
+                rtmp_url=channel.rtmp_url or "rtmp://a.rtmp.youtube.com/live2",
+                display_seconds=channel.display_seconds or 30,
+                broadcast_mode=True,  # Enable broadcast mode
+            )
+            manager._channel_id = channel.id
+            asyncio.create_task(manager.start())
+    else:
+        # No channels exist, create default and start
+        logger.info("No channels found, creating default channel...")
+        from ..db.models import ChannelCreate
+        default_channel = ChannelCreate(
+            name="CyberSec News",
+            news_topic="cybersecurity, hacking, data breach",
+            stream_key=STREAM_KEY,
+        )
+        channel = await create_channel(default_channel)
+        if channel:
             manager = get_stream_manager(channel.id)
-            if not manager.is_running:
-                logger.info(f"Auto-starting stream for channel: {channel.name}")
-                manager.update_config(
-                    stream_key=channel.stream_key,
-                    rtmp_url=channel.rtmp_url,
-                    display_seconds=channel.display_seconds
-                )
-                asyncio.create_task(manager.start())
+            logger.info("Auto-starting broadcast stream for default channel")
+            manager.update_config(
+                stream_key=STREAM_KEY,
+                rtmp_url="rtmp://a.rtmp.youtube.com/live2",
+                display_seconds=30,
+                broadcast_mode=True,
+            )
+            manager._channel_id = channel.id
+            asyncio.create_task(manager.start())
 
 
 @asynccontextmanager
