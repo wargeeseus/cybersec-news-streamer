@@ -322,6 +322,8 @@ class YouTubeStreamer:
         has_music = self._music_path.exists()
         has_bg = self._background_video.exists()
 
+        logger.info(f"Broadcast segment: bg={has_bg} ({self._background_video}), music={has_music} ({self._music_path})")
+
         # Escape special characters for FFmpeg drawtext
         safe_ticker = ticker_text.replace("'", "'\\''").replace(":", "\\:")
 
@@ -359,8 +361,9 @@ class YouTubeStreamer:
                     "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
                     "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
                     "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-                    "-shortest", "-f", "flv", self.rtmp_full_url,
+                    "-f", "flv", self.rtmp_full_url,
                 ]
+                logger.info("Using background video + overlay + music")
             else:
                 cmd = [
                     "ffmpeg", "-y",
@@ -374,8 +377,9 @@ class YouTubeStreamer:
                     "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
                     "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
                     "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-                    "-shortest", "-f", "flv", self.rtmp_full_url,
+                    "-f", "flv", self.rtmp_full_url,
                 ]
+                logger.info("Using background video + overlay (no music)")
         else:
             # Fallback: use overlay image with ticker animation only
             filter_complex = f"[0:v]{ticker_filter}[out]"
@@ -392,8 +396,9 @@ class YouTubeStreamer:
                     "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
                     "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
                     "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-                    "-shortest", "-f", "flv", self.rtmp_full_url,
+                    "-f", "flv", self.rtmp_full_url,
                 ]
+                logger.info("Using overlay + ticker + music (no bg video)")
             else:
                 cmd = [
                     "ffmpeg", "-y",
