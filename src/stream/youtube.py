@@ -349,34 +349,37 @@ class YouTubeStreamer:
             )
 
             if has_music:
+                # Input 0: background video, Input 1: overlay image, Input 2: music
                 cmd = [
                     "ffmpeg", "-y",
-                    "-stream_loop", "-1", "-re", "-i", str(self._background_video),
-                    "-loop", "1", "-i", str(overlay_path),
-                    "-stream_loop", "-1", "-i", str(self._music_path),
-                    "-t", str(self._display_seconds),
+                    "-stream_loop", "-1", "-i", str(self._background_video),
+                    "-loop", "1", "-t", str(self._display_seconds), "-i", str(overlay_path),
+                    "-i", str(self._music_path),
                     "-filter_complex", filter_complex,
-                    "-map", "[out]", "-map", "2:a",
+                    "-map", "[out]",
+                    "-map", "2:a:0",
+                    "-t", str(self._display_seconds),
                     "-c:v", "libx264", "-preset", "veryfast",
                     "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
                     "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
-                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
                     "-f", "flv", self.rtmp_full_url,
                 ]
                 logger.info("Using background video + overlay + music")
             else:
                 cmd = [
                     "ffmpeg", "-y",
-                    "-stream_loop", "-1", "-re", "-i", str(self._background_video),
-                    "-loop", "1", "-i", str(overlay_path),
+                    "-stream_loop", "-1", "-i", str(self._background_video),
+                    "-loop", "1", "-t", str(self._display_seconds), "-i", str(overlay_path),
                     "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-                    "-t", str(self._display_seconds),
                     "-filter_complex", filter_complex,
-                    "-map", "[out]", "-map", "2:a",
+                    "-map", "[out]",
+                    "-map", "2:a:0",
+                    "-t", str(self._display_seconds),
                     "-c:v", "libx264", "-preset", "veryfast",
                     "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
                     "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
-                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
                     "-f", "flv", self.rtmp_full_url,
                 ]
                 logger.info("Using background video + overlay (no music)")
@@ -388,14 +391,15 @@ class YouTubeStreamer:
                 cmd = [
                     "ffmpeg", "-y",
                     "-loop", "1", "-i", str(overlay_path),
-                    "-stream_loop", "-1", "-i", str(self._music_path),
-                    "-t", str(self._display_seconds),
+                    "-i", str(self._music_path),
                     "-filter_complex", filter_complex,
-                    "-map", "[out]", "-map", "1:a",
+                    "-map", "[out]",
+                    "-map", "1:a:0",
+                    "-t", str(self._display_seconds),
                     "-c:v", "libx264", "-preset", "veryfast",
                     "-b:v", "4500k", "-maxrate", "4500k", "-bufsize", "9000k",
                     "-pix_fmt", "yuv420p", "-r", "30", "-g", "60",
-                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
                     "-f", "flv", self.rtmp_full_url,
                 ]
                 logger.info("Using overlay + ticker + music (no bg video)")
