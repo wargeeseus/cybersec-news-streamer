@@ -110,9 +110,11 @@ async def login_page(request: Request, error: str = None):
     qr_code = None
     secret_key = None
 
+    # Security: Only show QR code and secret for first-time setup
     if not is_setup:
         qr_code = await generate_totp_qr_code()
         secret_key = await get_or_create_totp_secret()
+    # Once registered, never expose the secret again
 
     return templates.TemplateResponse(
         "login.html",

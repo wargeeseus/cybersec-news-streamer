@@ -45,8 +45,15 @@ async def mark_totp_setup_complete():
     await set_setting('totp_setup_complete', 'true')
 
 
-async def generate_totp_qr_code() -> str:
-    """Generate QR code for Google Authenticator setup."""
+async def generate_totp_qr_code() -> Optional[str]:
+    """Generate QR code for Google Authenticator setup.
+    Returns None if TOTP is already set up (security: never expose secret again).
+    """
+    # Security: Never show QR code if already registered
+    if await is_totp_setup():
+        logger.warning("Attempted to generate QR code after setup complete - blocked")
+        return None
+
     secret = await get_or_create_totp_secret()
 
     # Create TOTP URI
